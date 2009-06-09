@@ -5,6 +5,7 @@ use warnings;
 use base 'Padre::Plugin';
 use Readonly;
 use WGDev;
+#use Padre::Plugin::WebGUI::Assets;
 
 =head1 NAME
 
@@ -47,8 +48,13 @@ sub menu_plugins_simple {
 
     Readonly my $wreservice => 'gksudo -- /data/wre/sbin/wreservice.pl';
     my $main = Padre->ide->wx->main;
+    
+    use WGDev;
+    my $wgd = WGDev->new('/data/WebGUI', 'dev.localhost.localdomain.conf');
 
     my $menu = [
+    
+    $wgd->version => 'blah',
 
         "WGDev Command" => [
             map {
@@ -97,6 +103,8 @@ sub menu_plugins_simple {
         '---' => undef,
 
         "About" => sub { $self->show_about },
+        
+        "Assets\tCtrl+Shift+S" => sub { $self->show_hide_assets },
     ];
 
     return $self->plugin_name => $menu;
@@ -178,6 +186,57 @@ END_MESSAGE
     Wx::AboutBox($about);
 
     return;
+}
+
+sub show_hide_assets {
+	my $self = shift;
+    my $main = Padre->ide->wx->main;
+#	my $on = ( @_ ? ( $_[0] ? 1 : 0 ) : 1 );
+#	unless ( $on == $main->menu->view->{assets}->IsChecked ) {
+#		$main->menu->view->{assets}->Check($on);
+#	}
+#	$main->config->set( webgui_assets => $on );
+#	$main->config->write;
+
+#    Wx::AboutBox(Wx::AboutDialogInfo->new);
+
+    # Forcibly reset for now
+#    if ($self->{assets}) {
+#        $main->right->hide( $self->{assets} );
+#        delete $self->{assets};
+#        delete $self->{assets_shown};
+#    }
+    
+    my $assets = $self->assets;
+    if (!$self->{assets_shown}) {
+        $self->{assets_shown} = 1;
+        $main->right->show($self->assets);
+		$self->assets->update_gui;
+    } else {
+		$self->{assets_shown} = 0;
+        $main->right->hide( $assets );
+    }
+
+	$main->aui->Update;
+	$main->ide->save_config;
+
+	return;
+}
+
+sub plugin_icon {
+	return Wx::Bitmap->new( '/home/patspam/img/categorised/icons/combined/iconbuffet/1-up_32.png', Wx::wxBITMAP_TYPE_PNG );
+}
+
+sub assets {
+    my $self = shift;
+    my $main = Padre->ide->wx->main;
+    my $wgd = WGDev->new('/data/WebGUI', 'dev.localhost.localdomain.conf');
+    
+	$self->{assets} or
+		$self->{assets} = do {
+		require Padre::Plugin::WebGUI::Assets;
+		Padre::Plugin::WebGUI::Assets->new( $main, $wgd );
+		};
 }
 
 =head1 AUTHOR
