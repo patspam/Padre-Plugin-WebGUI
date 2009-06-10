@@ -12,13 +12,23 @@ use Padre::Wx      ();
 our $VERSION = '0.1';
 our @ISA     = 'Wx::TreeCtrl';
 
+use Class::XSAccessor getters => {
+    plugin => 'plugin',
+};
+
 sub new {
-    my $class = shift;
-    my $main  = shift;
-    my $wgd   = shift;
-    my $self  = $class->SUPER::new( $main->right, -1, Wx::wxDefaultPosition, Wx::wxDefaultSize,
-        Wx::wxTR_HIDE_ROOT | Wx::wxTR_SINGLE | Wx::wxTR_HAS_BUTTONS | Wx::wxTR_LINES_AT_ROOT | Wx::wxBORDER_NONE );
-    $self->{wgd} = $wgd;
+    my $class  = shift;
+    my $plugin = shift;
+    my $self  = $class->SUPER::new( 
+        $plugin->main->right, 
+        -1, 
+        Wx::wxDefaultPosition, 
+        Wx::wxDefaultSize,
+        Wx::wxTR_HIDE_ROOT | Wx::wxTR_SINGLE | Wx::wxTR_HAS_BUTTONS | Wx::wxTR_LINES_AT_ROOT | Wx::wxBORDER_NONE 
+    );
+    
+    $self->{plugin} = $plugin;
+    
     $self->SetIndent(10);
     $self->{force_next} = 0;
 
@@ -40,7 +50,7 @@ sub new {
 }
 
 sub wgd {
-    $_[0]->{wgd};
+    $_[0]->plugin->wgd;
 }
 
 sub right {

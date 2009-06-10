@@ -3,9 +3,8 @@ package Padre::Plugin::WebGUI;
 use strict;
 use warnings;
 use base 'Padre::Plugin';
+use Padre::Util qw(_T);
 use Readonly;
-use WGDev;
-#use Padre::Plugin::WebGUI::Assets;
 
 =head1 NAME
 
@@ -17,7 +16,7 @@ Version 0.01
 
 =cut
 
-our $VERSION = '0.01_01';
+our $VERSION = '0.01_02';
 
 =head1 SYNOPSIS
 
@@ -31,9 +30,24 @@ Once you enable this Plugin under Padre, you'll get a brand new "WebGUI" menu wi
 
 =cut
 
+# generate fast accessors
+use Class::XSAccessor 
+    getters => {
+        wgd => 'wgd',
+        asset_tree_visible => 'asset_tree_visible',
+        log => 'log',
+    };
+
+# static field to contain reference to current plugin configuration
+my $config;
+
+sub plugin_config {
+	return $config;
+}
+
 # The plugin name to show in the Plugin Manager and menus
 sub plugin_name {
-    'WebGUI';
+    _T('WebGUI');
 }
 
 # Declare the Padre interfaces this plugin uses
@@ -42,19 +56,98 @@ sub padre_interfaces {
         ;
 }
 
+# called when the plugin is enabled
+sub plugin_enable {
+	my $self = shift;
+
+	# Read the plugin configuration, and create it if it is not there
+	$config = $self->config_read;
+	if (!$config) {
+		# no configuration, let us write some defaults
+		$config = {
+            WEBGUI_ROOT => '/data/WebGUI',
+            WEBGUI_CONFIG => 'dev.localhost.localdomain.conf',
+        };
+		$self->config_write($config);
+	}
+	
+	use Padre::Log;
+	my $log = Padre::Log->new(level => 'debug');
+	$self->{log} = $log;
+	$self->log->debug("Logged initialised");
+	
+	my $wgd = eval {
+        require WGDev;
+        $self->log->debug("Loading WGDev using WEBGUI_ROOT: $config->{WEBGUI_ROOT} and WEBGUI_CONFIG: $config->{WEBGUI_CONFIG}");
+        WGDev->new( $config->{WEBGUI_ROOT}, $config->{WEBGUI_CONFIG});
+    };
+    
+    if ($@) {
+        $self->log->error("The following error occurred when loading WGDev:\n\n $@");
+        $self->main->error("The following error occurred when loading WGDev:\n\n $@");
+        return;
+    }
+    
+    if (!$wgd) {
+        $self->log->error('Unable to instantiate wgd');
+        $self->main->error('Unable to instantiate wgd');
+        return;
+    }
+	
+	$self->{wgd} = $wgd;
+
+	return 1;
+}
+
+sub session {
+    my $self = shift;
+    
+    my $session = eval {$self->wgd->session};
+    if ($@) {
+        $self->log->warn("Unable to get wgd session: $@");
+        return;
+    }
+    return $session;
+}
+
+sub ping {
+    my $self = shift;
+    if (!$self->session) {
+        $self->main->error(<<END_ERROR);
+Oops, I was unable to connect to your WebGUI site.
+Please check that your server is running, and that 
+the following details are correct:
+
+ WEBGUI_ROOT:\t $config->{WEBGUI_ROOT  }
+ WEBGUI_CONFIG:\t $config->{WEBGUI_CONFIG}
+END_ERROR
+        return;
+    }
+    return 1;
+}
+
+# called when the plugin is disabled/reloaded
+sub plugin_disable {
+    my $self = shift;
+    if (my $asset_tree = $self->asset_tree) {
+        $self->main->right->hide( $asset_tree );
+    }
+    
+    # Unload all private classese here, so that they can be reloaded
+    require Class::Unload;
+    return Class::Unload->unload('Padre::Plugin::WebGUI::Assets');
+}
+
 # The command structure to show in the Plugins menu
 sub menu_plugins_simple {
     my $self = shift;
 
     Readonly my $wreservice => 'gksudo -- /data/wre/sbin/wreservice.pl';
-    my $main = Padre->ide->wx->main;
-    
-    use WGDev;
-    my $wgd = WGDev->new('/data/WebGUI', 'dev.localhost.localdomain.conf');
+    my $main = $self->main;
 
     my $menu = [
     
-    $wgd->version => 'blah',
+        "Reload WebGUI Plugin\tCtrl+Shift+R" => sub { $main->ide->plugin_manager->reload_current_plugin; },
 
         "WGDev Command" => [
             map {
@@ -104,7 +197,7 @@ sub menu_plugins_simple {
 
         "About" => sub { $self->show_about },
         
-        "Assets\tCtrl+Shift+S" => sub { $self->show_hide_assets },
+        "Asset Tree\tCtrl+Shift+S" => sub { $self->toggle_asset_tree },
     ];
 
     return $self->plugin_name => $menu;
@@ -143,6 +236,15 @@ sub online_resources {
     return map { $_ => $RESOURCES{$_} } sort { $a cmp $b } keys %RESOURCES;
 }
 
+sub show_preferences {
+	my $self = shift;
+	my $wx_parent = shift;
+	
+	require Padre::Plugin::WebGUI::Preferences;
+	my $prefs  = Padre::Plugin::WebGUI::Preferences->new($self);
+	$prefs->Show;
+}
+
 sub wgd_commands {
     use WGDev::Command;
     return WGDev::Command->command_list;
@@ -151,23 +253,21 @@ sub wgd_commands {
 sub wgd_cmd {
     my ( $self, $cmd ) = @_;
 
-    my $main = Padre->ide->wx->main;
-    my $options = $main->prompt( "$cmd options", "wgd $cmd", "wgd_${cmd}_options" );
+    my $options = $self->main->prompt( "$cmd options", "wgd $cmd", "wgd_${cmd}_options" );
     if ( defined $options ) {
-        $self->wgd("$cmd $options");
+        $self->run_wgd("$cmd $options");
     }
     return;
 }
 
-sub wgd {
+sub run_wgd {
     my ( $self, $cmd ) = @_;
-    my $main = Padre->ide->wx->main;
     local $ENV{WEBGUI_ROOT}   = '/data/WebGUI';
     local $ENV{WEBGUI_CONFIG} = 'dev.localhost.localdomain.conf';
     local $ENV{EDITOR}        = '/usr/local/bin/padre';
 
-    #    $main->run_command( qq(/data/wre/prereqs/bin/perl /data/wre/prereqs/bin/wgd $cmd) );
-    $main->run_command(qq(wgd $cmd));
+    #    $self->main->run_command( qq(/data/wre/prereqs/bin/perl /data/wre/prereqs/bin/wgd $cmd) );
+    $self->main->run_command(qq(wgd $cmd));
 }
 
 sub show_about {
@@ -188,54 +288,64 @@ END_MESSAGE
     return;
 }
 
-sub show_hide_assets {
+sub toggle_asset_tree {
 	my $self = shift;
-    my $main = Padre->ide->wx->main;
 #	my $on = ( @_ ? ( $_[0] ? 1 : 0 ) : 1 );
-#	unless ( $on == $main->menu->view->{assets}->IsChecked ) {
-#		$main->menu->view->{assets}->Check($on);
+#	unless ( $on == $self->main->menu->view->{assets}->IsChecked ) {
+#		$self->main->menu->view->{assets}->Check($on);
 #	}
-#	$main->config->set( webgui_assets => $on );
-#	$main->config->write;
+#	$self->main->config->set( webgui_assets => $on );
+#	$self->main->config->write;
 
 #    Wx::AboutBox(Wx::AboutDialogInfo->new);
 
     # Forcibly reset for now
-#    if ($self->{assets}) {
-#        $main->right->hide( $self->{assets} );
-#        delete $self->{assets};
+#    if ($self->asset_tree) {
+#        $self->main->right->hide( $self->asset_tree );
+#        delete $self->asset_tree;
 #        delete $self->{assets_shown};
 #    }
+    return unless $self->ping;
     
-    my $assets = $self->assets;
-    if (!$self->{assets_shown}) {
-        $self->{assets_shown} = 1;
-        $main->right->show($self->assets);
-		$self->assets->update_gui;
+    my $asset_tree = $self->asset_tree;
+    if (!$self->asset_tree_visible) {
+        $self->{asset_tree_visible} = 1;
+        $self->main->right->show($asset_tree);
+		$asset_tree->update_gui;
     } else {
-		$self->{assets_shown} = 0;
-        $main->right->hide( $assets );
+        $self->{asset_tree_visible} = 0;
+        $self->main->right->hide($asset_tree);
     }
 
-	$main->aui->Update;
-	$main->ide->save_config;
+	$self->main->aui->Update;
+	$self->ide->save_config;
 
 	return;
 }
 
-sub plugin_icon {
-	return Wx::Bitmap->new( '/home/patspam/img/categorised/icons/combined/iconbuffet/1-up_32.png', Wx::wxBITMAP_TYPE_PNG );
+# private subroutine to return the current share directory location
+sub _sharedir {
+	return Cwd::realpath(
+		File::Spec->join(File::Basename::dirname(__FILE__),'WebGUI/share')
+	);
 }
 
-sub assets {
+# the icon displayed in the Padre plugin manager list
+sub plugin_icon {
+    # find resource path
+    my $iconpath = File::Spec->catfile( _sharedir(), 'icons', 'wg_16x16.png');
+
+    # create and return icon
+    return Wx::Bitmap->new( $iconpath, Wx::wxBITMAP_TYPE_PNG );
+}
+
+sub asset_tree {
     my $self = shift;
-    my $main = Padre->ide->wx->main;
-    my $wgd = WGDev->new('/data/WebGUI', 'dev.localhost.localdomain.conf');
     
-	$self->{assets} or
-		$self->{assets} = do {
+	$self->{asset_tree} or
+		$self->{asset_tree} = do {
 		require Padre::Plugin::WebGUI::Assets;
-		Padre::Plugin::WebGUI::Assets->new( $main, $wgd );
+		Padre::Plugin::WebGUI::Assets->new( $self );
 		};
 }
 
