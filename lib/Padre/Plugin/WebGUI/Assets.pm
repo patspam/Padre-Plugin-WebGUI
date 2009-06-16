@@ -3,22 +3,23 @@ package Padre::Plugin::WebGUI::Assets;
 use 5.008;
 use strict;
 use warnings;
-use File::Basename ();
-use Params::Util qw{_INSTANCE};
 use Padre::Current ();
 use Padre::Util    ();
 use Padre::Wx      ();
+use base 'Wx::TreeCtrl';
+use Data::Dumper;
 
-our $VERSION = '0.1';
-our @ISA     = 'Wx::TreeCtrl';
-
+# generate fast accessors
 use Class::XSAccessor getters => {
     plugin => 'plugin',
+    connected => 'connected',
 };
 
+# constructor
 sub new {
     my $class  = shift;
     my $plugin = shift;
+    
     my $self  = $class->SUPER::new( 
         $plugin->main->right, 
         -1, 
@@ -28,10 +29,8 @@ sub new {
     );
     
     $self->{plugin} = $plugin;
-    
-    $self->SetIndent(10);
-    $self->{force_next} = 0;
 
+    # Register event handlers..    
     Wx::Event::EVT_TREE_ITEM_ACTIVATED(
         $self, $self,
         sub {
@@ -41,7 +40,7 @@ sub new {
 
     $self->Hide;
 
-    # create imagelist
+    # Create image list
     my $imglist = Wx::ImageList->new( 16, 16 );
     $self->AssignImageList($imglist);
     $imglist->Add( Padre::Wx::Icon::find('status/padre-plugin') );
@@ -49,115 +48,155 @@ sub new {
     return $self;
 }
 
-sub wgd {
-    $_[0]->plugin->wgd;
-}
+# accessors
+sub wgd { $_[0]->plugin->wgd }
+sub right { $_[0]->GetParent }
+sub main { $_[0]->GetGrandParent }
+sub gettext_label { Wx::gettext('Asset Tree') }
+sub clear { $_[0]->DeleteAllItems }
+sub log { $_[0]->plugin->log }
 
-sub right {
-    $_[0]->GetParent;
-}
-
-sub main {
-    $_[0]->GetGrandParent;
-}
-
-sub gettext_label {
-
-    #	Wx::gettext('assets');
-    'Asset Tree';
-}
-
-sub clear {
-    $_[0]->DeleteAllItems;
-    return;
-}
-
-sub force_next {
-    my $self = shift;
-    if ( defined $_[0] ) {
-        $self->{force_next} = $_[0];
-        return $self->{force_next};
-    }
-    else {
-        return $self->{force_next};
-    }
-}
-
-#####################################################################
-# Event Handlers
-
-sub on_tree_item_activated {
-    my ( $self, $event ) = @_;
-
-    my $item = $self->GetPlData( $event->GetItem );
-    return if not defined $item;
-
-    # Generate the About dialog
-    my $about = Wx::AboutDialogInfo->new;
-    $about->SetName( 'aa' . $item->{name} );
-    use Data::Dumper;
-    $about->SetDescription( Dumper($item) );
-    $about->SetVersion($VERSION);
-
-    # Show the About dialog
-    Wx::AboutBox($about);
-
-    return;
-}
-
-sub ls_assets {
-    my $self  = shift;
-    my $asset = shift;
-    my $wgd   = $self->wgd;
-
-    $asset ||= WebGUI::Asset->getRoot( $wgd->session );
-
-    my @data;
-    my $children = $asset->getLineage( ["children"], { returnObjects => 1 } );
-    for my $child ( @{$children} ) {
-        my $icon = $child->getIcon;
-        $icon =~ s{.*/}{};
-        my %item = (
-            name => $child->getMenuTitle,
-            id   => $child->getId,
-            type => $child->getName,
-            icon => $icon,
-        );
-        $item{children} = $self->ls_assets($child);
-
-        push @data, \%item;
-    }
-    return \@data;
-}
 
 sub update_gui {
-    my ($self) = @_;
+    my $self = shift;
+    if ($self->connected) {
+        $self->update_gui_connected;
+    } else {
+        $self->update_gui_disconnected;
+    }
+}
 
-    return if not Padre->ide->wx;
+sub update_gui_disconnected {
+    my $self = shift;
+    
+    $self->{connected} = 0;
 
-    my $assets = $self;    #$self->main->assets;
-    $assets->Freeze;
-    $assets->clear;
-
-    my $root = $assets->AddRoot(
-
-        #		Wx::gettext('assets'),
-        'Asset Tree',
+    $self->Freeze;
+    $self->clear;
+    
+    my $root = $self->AddRoot(
+		Wx::gettext('Asset Tree'),
         -1,
         -1,
         Wx::TreeItemData->new('')
     );
-
-    _update_treectrl( $assets, $self->ls_assets, $root );
-
-    Wx::Event::EVT_TREE_ITEM_RIGHT_CLICK( $assets, $assets, \&_on_tree_item_right_click, );
-
-    $assets->GetBestSize;
-
-    $assets->Thaw;
+    my $connect = $self->AppendItem(
+        $root,
+        'Connect',
+        -1, 
+        -1,
+        Wx::TreeItemData->new({connect => 1}),
+    );
+    $self->SetItemTextColour( $connect, Wx::Colour->new( 0x00, 0x00, 0x7f ) );
+    $self->SetItemImage( $connect, 0 );
+    $self->GetBestSize;
+    
+    $self->Thaw;
 }
 
-sub _on_tree_item_right_click {
+sub update_gui_connected {
+    my $self = shift;
+    
+    $self->{connected} = 1;
+    
+    # Show loading indicator
+    $self->Freeze;
+    $self->clear;
+    
+    my $tmp_root = $self->AddRoot(
+		Wx::gettext('Asset Tree'),
+        -1,
+        -1,
+        Wx::TreeItemData->new('')
+    );
+    my $status = $self->AppendItem(
+        $tmp_root,
+        'Loading..',
+        -1, 
+        -1,
+        Wx::TreeItemData->new({loading => 1}),
+    );
+    $self->SetItemTextColour( $status, Wx::Colour->new( 0x00, 0x00, 0x7f ) );
+    $self->SetItemImage( $status, 0 );
+    $self->GetBestSize;
+    
+    $self->Thaw;
+    
+    # Force window update
+    $self->Update;
+    
+    # Now actually connect..
+    $self->Freeze;
+    $self->clear;
+
+    my $root = $self->AddRoot(
+		Wx::gettext('Asset Tree'),
+        -1,
+        -1,
+        Wx::TreeItemData->new('')
+    );
+    my $refresh = $self->AppendItem(
+        $root,
+        'Refresh',
+        -1, 
+        -1,
+        Wx::TreeItemData->new({refresh => 1}),
+    );
+    $self->SetItemTextColour( $refresh, Wx::Colour->new( 0x00, 0x00, 0x7f ) );
+    $self->SetItemImage( $refresh, 0 );
+
+    update_treectrl( $self, $self->build_asset_tree, $root );
+
+    # Register right-click event handler
+    Wx::Event::EVT_TREE_ITEM_RIGHT_CLICK( $self, $self, \&on_tree_item_right_click, );
+
+    $self->GetBestSize;
+    $self->Thaw;
+}
+
+# generate the list of assets
+sub build_asset_tree {
+    my $self    = shift;
+    my $wgd     = $self->wgd;
+    my $session = $wgd->session;
+
+    require WebGUI::Asset;
+
+    my $root = WebGUI::Asset->getRoot($session);
+    my $assets = $root->getLineage( [ "self", "descendants" ], { returnObjects => 1 } );
+    
+    # Build a hash mapping each assetId to an array of children for that asset
+    my %tree;
+    foreach my $asset (@$assets) {
+        # Add this new asset to the tree, initially with no children
+        $tree{ $asset->getId } = [];
+        
+        # Push this asset onto its parent's list of children
+        push @{ $tree{ $asset->get('parentId') } }, $asset;
+    }
+
+    # Serialise the tree and turn it into a recursive tree hash as requried by update_treectrl
+    my $serialise;
+    $serialise = sub {
+        my $asset = shift or return;
+        my $node = {
+            name => $asset->getMenuTitle,
+            id   => $asset->getId,
+            type => $asset->getName,
+            url  => $asset->getUrl,
+            icon => File::Basename::fileparse( $asset->getIcon ),
+        };
+        
+        # Recursively serialise children and add to node's children property
+        push( @{ $node->{children} }, $serialise->($_) ) for @{ $tree{ $asset->getId } };
+        return $node;
+    };
+
+    # Our tree starts with all the children of the root node
+    return $serialise->($root)->{children};
+}
+
+sub on_tree_item_right_click {
     my ( $self, $event ) = @_;
 
     my $showMenu = 0;
@@ -165,34 +204,24 @@ sub _on_tree_item_right_click {
     my $itemData = $self->GetPlData( $event->GetItem );
 
     if ( defined $itemData ) {
-        my $goTo = $menu->Append( -1, "Export Package" );    #Wx::gettext("Open File") );
+        my $submenu;
+        
+        $submenu = $menu->Append( -1, Wx::gettext("Details..") );
         Wx::Event::EVT_MENU(
-            $self, $goTo,
+            $self, $submenu,
             sub {
-                $self->on_tree_item_activated($event);
+                $self->on_tree_item_activated($event, { action => 'details' });
             },
         );
-        $showMenu++;
-    }
-
-    if (   defined($itemData)
-        && defined( $itemData->{type} )
-        && ( $itemData->{type} eq 'modules' || $itemData->{type} eq 'pragmata' ) )
-    {
-        my $pod = $menu->Append( -1, Wx::gettext("Open &Documentation") );
+        
+        $submenu = $menu->Append( -1, Wx::gettext("Export Package") );
         Wx::Event::EVT_MENU(
-            $self, $pod,
+            $self, $submenu,
             sub {
-
-                # TODO Fix this wasting of objects (cf. Padre::Wx::Menu::Help)
-                require Padre::Wx::DocBrowser;
-                my $help = Padre::Wx::DocBrowser->new;
-                $help->help( $itemData->{name} );
-                $help->SetFocus;
-                $help->Show(1);
-                return;
+                $self->on_tree_item_activated($event, {action => 'export' });
             },
         );
+        
         $showMenu++;
     }
 
@@ -200,6 +229,38 @@ sub _on_tree_item_right_click {
         my $x = $event->GetPoint->x;
         my $y = $event->GetPoint->y;
         $self->PopupMenu( $menu, $x, $y );
+    }
+
+    return;
+}
+
+
+# event handler for item activation
+sub on_tree_item_activated {
+    my ( $self, $event, $opts ) = @_;
+    $opts ||= {};
+
+    # Get the target item
+    my $item = $self->GetPlData( $event->GetItem );
+    return if not defined $item;
+    
+    if ($item->{connect}) {
+        $self->update_gui_connected;
+        return;
+    }
+    
+    if ($item->{refresh}) {
+        $self->update_gui_connected;
+        return;
+    }    
+    
+    if ($opts->{action} eq 'details') {
+        $self->main->error( <<END_DETAILS );
+Id: \t\t\t $item->{id}
+Type: \t\t $item->{type}
+Url: \t\t $item->{url}
+Menu Title: \t $item->{name}
+END_DETAILS
     }
 
     return;
@@ -219,7 +280,7 @@ sub get_item_image {
     return $image_lookup->{$icon} || 0;
 }
 
-sub _update_treectrl {
+sub update_treectrl {
     my ( $self, $items, $parent ) = @_;
 
     foreach my $item ( @{$items} ) {
@@ -239,7 +300,7 @@ sub _update_treectrl {
         $self->SetItemImage( $node, $self->get_item_image( $item->{icon} ) );
 
         # Recurse, adding children to $node
-        _update_treectrl( $self, $item->{children}, $node );
+        update_treectrl( $self, $item->{children}, $node );
     }
 
     return;

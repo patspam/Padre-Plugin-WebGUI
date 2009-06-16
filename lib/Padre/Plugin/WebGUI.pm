@@ -3,7 +3,6 @@ package Padre::Plugin::WebGUI;
 use strict;
 use warnings;
 use base 'Padre::Plugin';
-use Padre::Util qw(_T);
 use Readonly;
 
 =head1 NAME
@@ -47,7 +46,7 @@ sub plugin_config {
 
 # The plugin name to show in the Plugin Manager and menus
 sub plugin_name {
-    _T('WebGUI');
+    Wx::gettext('WebGUI');
 }
 
 # Declare the Padre interfaces this plugin uses
@@ -305,6 +304,7 @@ sub toggle_asset_tree {
 #        delete $self->asset_tree;
 #        delete $self->{assets_shown};
 #    }
+    
     return unless $self->ping;
     
     my $asset_tree = $self->asset_tree;
