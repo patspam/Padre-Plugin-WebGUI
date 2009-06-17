@@ -258,7 +258,7 @@ sub on_tree_item_activated {
         $self->main->error( <<END_DETAILS );
 Id: \t\t\t $item->{id}
 Type: \t\t $item->{type}
-Url: \t\t $item->{url}
+Url: \t\t\t $item->{url}
 Menu Title: \t $item->{name}
 END_DETAILS
     }
@@ -288,13 +288,7 @@ sub update_treectrl {
             $parent,
             $item->{name},
             -1, -1,
-            Wx::TreeItemData->new(
-                {   id   => $item->{id},
-                    name => $item->{name},
-                    type => $item->{type},
-                    icon => $item->{icon},
-                }
-            ),
+            Wx::TreeItemData->new({%$item}),
         );
         $self->SetItemTextColour( $node, Wx::Colour->new( 0x00, 0x00, 0x7f ) );
         $self->SetItemImage( $node, $self->get_item_image( $item->{icon} ) );
@@ -308,7 +302,7 @@ sub update_treectrl {
 
 1;
 
-# Copyright 2008-2009 The Padre development team as listed in Padre.pm.
+# Copyright 2009 Patrick Donelan
 # LICENSE
 # This program is free software; you can redistribute it and/or
 # modify it under the same terms as Perl 5 itself.

@@ -93,6 +93,7 @@ sub plugin_enable {
         return;
     }
 	
+	$self->main->{webgui} = $self;
 	$self->{wgd} = $wgd;
 
 	return 1;
@@ -128,13 +129,23 @@ END_ERROR
 # called when the plugin is disabled/reloaded
 sub plugin_disable {
     my $self = shift;
+    my $main = $self->main;
     if (my $asset_tree = $self->asset_tree) {
-        $self->main->right->hide( $asset_tree );
+        $main->right->hide( $asset_tree );
     }
+    if (my $logview = $self->logview) {
+        $main->bottom->hide( $logview );
+        $logview->stop;
+    }    
+    $main->show_output( 0 );#$self->main->menu->view->{output}->IsChecked );
+    delete $main->{webgui};
     
     # Unload all private classese here, so that they can be reloaded
     require Class::Unload;
-    return Class::Unload->unload('Padre::Plugin::WebGUI::Assets');
+    Class::Unload->unload('Padre::Plugin::WebGUI::Assets');
+    Class::Unload->unload('Padre::Plugin::WebGUI::Logview');
+    Class::Unload->unload('Padre::Plugin::WebGUI::Preferences');
+    Class::Unload->unload('Padre::Plugin::WebGUI::Task::Logview');
 }
 
 # The command structure to show in the Plugins menu
@@ -308,13 +319,23 @@ sub toggle_asset_tree {
     return unless $self->ping;
     
     my $asset_tree = $self->asset_tree;
+    my $logview = $self->logview;
     if (!$self->asset_tree_visible) {
         $self->{asset_tree_visible} = 1;
-        $self->main->right->show($asset_tree);
-		$asset_tree->update_gui;
+		
+		$self->main->right->show( $asset_tree );
+		$self->main->bottom->show( $logview );
+		
+#		$asset_tree->update_gui;
+		
+		$logview->AppendText( "Loaded..\n" );
+		$logview->start;#check_for_updates();
+
     } else {
         $self->{asset_tree_visible} = 0;
         $self->main->right->hide($asset_tree);
+        $self->main->bottom->hide( $logview );
+#        $logview->Remove( 0, $logview->GetLastPosition );
     }
 
 	$self->main->aui->Update;
@@ -344,9 +365,19 @@ sub asset_tree {
     
 	$self->{asset_tree} or
 		$self->{asset_tree} = do {
-		require Padre::Plugin::WebGUI::Assets;
-		Padre::Plugin::WebGUI::Assets->new( $self );
+            require Padre::Plugin::WebGUI::Assets;
+            Padre::Plugin::WebGUI::Assets->new( $self );
 		};
+}
+
+sub logview {
+    my $self = shift;
+    
+	$self->{logview} or
+		$self->{logview} = do {
+		    require Padre::Plugin::WebGUI::Logview;
+            Padre::Plugin::WebGUI::Logview->new($self->main);
+        };
 }
 
 =head1 AUTHOR
