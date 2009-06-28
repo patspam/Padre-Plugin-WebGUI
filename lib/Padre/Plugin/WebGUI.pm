@@ -3,6 +3,7 @@ package Padre::Plugin::WebGUI;
 use strict;
 use warnings;
 use base 'Padre::Plugin';
+use Padre::Util ('_T');
 use Readonly;
 
 =head1 NAME
@@ -30,23 +31,27 @@ Once you enable this Plugin under Padre, you'll get a brand new "WebGUI" menu wi
 =cut
 
 # generate fast accessors
-use Class::XSAccessor 
-    getters => {
-        wgd => 'wgd',
-        asset_tree_visible => 'asset_tree_visible',
-        log => 'log',
-    };
+use Class::XSAccessor getters => {
+    wgd => 'wgd',
+    log => 'log',
+};
+
+my $logfiles = [
+    '/data/wre/var/logs/modproxy.error.log', '/data/wre/var/logs/modperl.error.log',
+    '/data/wre/var/logs/modrewrite.log',     '/data/wre/var/logs/mylog.log',
+    '/data/wre/var/logs/webgui.log',
+];
 
 # static field to contain reference to current plugin configuration
 my $config;
 
 sub plugin_config {
-	return $config;
+    return $config;
 }
 
 # The plugin name to show in the Plugin Manager and menus
 sub plugin_name {
-    Wx::gettext('WebGUI');
+    return _T("WebGUI");
 }
 
 # Declare the Padre interfaces this plugin uses
@@ -57,52 +62,53 @@ sub padre_interfaces {
 
 # called when the plugin is enabled
 sub plugin_enable {
-	my $self = shift;
+    my $self = shift;
 
-	# Read the plugin configuration, and create it if it is not there
-	$config = $self->config_read;
-	if (!$config) {
-		# no configuration, let us write some defaults
-		$config = {
-            WEBGUI_ROOT => '/data/WebGUI',
+    # Read the plugin configuration, and create it if it is not there
+    $config = $self->config_read;
+    if ( !$config ) {
+
+        # no configuration, let us write some defaults
+        $config = {
+            WEBGUI_ROOT   => '/data/WebGUI',
             WEBGUI_CONFIG => 'dev.localhost.localdomain.conf',
         };
-		$self->config_write($config);
-	}
-	
-	use Padre::Log;
-	my $log = Padre::Log->new(level => 'debug');
-	$self->{log} = $log;
-	$self->log->debug("Logged initialised");
-	
-	my $wgd = eval {
+        $self->config_write($config);
+    }
+
+    use Padre::Log;
+    my $log = Padre::Log->new( level => 'debug' );
+    $self->{log} = $log;
+    $self->log->debug("Logged initialised");
+
+    my $wgd = eval {
         require WGDev;
-        $self->log->debug("Loading WGDev using WEBGUI_ROOT: $config->{WEBGUI_ROOT} and WEBGUI_CONFIG: $config->{WEBGUI_CONFIG}");
-        WGDev->new( $config->{WEBGUI_ROOT}, $config->{WEBGUI_CONFIG});
+        $self->log->debug(
+            "Loading WGDev using WEBGUI_ROOT: $config->{WEBGUI_ROOT} and WEBGUI_CONFIG: $config->{WEBGUI_CONFIG}");
+        WGDev->new( $config->{WEBGUI_ROOT}, $config->{WEBGUI_CONFIG} );
     };
-    
+
     if ($@) {
         $self->log->error("The following error occurred when loading WGDev:\n\n $@");
         $self->main->error("The following error occurred when loading WGDev:\n\n $@");
         return;
     }
-    
-    if (!$wgd) {
+
+    if ( !$wgd ) {
         $self->log->error('Unable to instantiate wgd');
         $self->main->error('Unable to instantiate wgd');
         return;
     }
-	
-	$self->main->{webgui} = $self;
-	$self->{wgd} = $wgd;
 
-	return 1;
+    $self->{wgd} = $wgd;
+
+    return 1;
 }
 
 sub session {
     my $self = shift;
-    
-    my $session = eval {$self->wgd->session};
+
+    my $session = eval { $self->wgd->session };
     if ($@) {
         $self->log->warn("Unable to get wgd session: $@");
         return;
@@ -112,7 +118,7 @@ sub session {
 
 sub ping {
     my $self = shift;
-    if (!$self->session) {
+    if ( !$self->session ) {
         $self->main->error(<<END_ERROR);
 Oops, I was unable to connect to your WebGUI site.
 Please check that your server is running, and that 
@@ -130,16 +136,17 @@ END_ERROR
 sub plugin_disable {
     my $self = shift;
     my $main = $self->main;
-    if (my $asset_tree = $self->asset_tree) {
-        $main->right->hide( $asset_tree );
+    if ( my $asset_tree = $self->{asset_tree} ) {
+        $main->right->hide($asset_tree);
+        delete $self->{asset_tree};
     }
-    if (my $logview = $self->logview) {
-        $main->bottom->hide( $logview );
+    if ( my $logview = $self->{logview} ) {
         $logview->stop;
-    }    
-    $main->show_output( 0 );#$self->main->menu->view->{output}->IsChecked );
-    delete $main->{webgui};
-    
+        $main->bottom->hide($logview);
+        delete $self->{logview};
+    }
+    $main->show_output(0);
+
     # Unload all private classese here, so that they can be reloaded
     require Class::Unload;
     Class::Unload->unload('Padre::Plugin::WebGUI::Task::Logview');
@@ -148,69 +155,74 @@ sub plugin_disable {
     Class::Unload->unload('Padre::Plugin::WebGUI::Preferences');
 }
 
-# The command structure to show in the Plugins menu
-sub menu_plugins_simple {
+sub menu_plugins {
     my $self = shift;
+    my $main = shift;
 
-    Readonly my $wreservice => 'gksudo -- /data/wre/sbin/wreservice.pl';
-    my $main = $self->main;
+    # Create a simple menu with a single About entry
+    $self->{menu} = Wx::Menu->new;
 
-    my $menu = [
-    
-        "Reload WebGUI Plugin\tCtrl+Shift+R" => sub { $main->ide->plugin_manager->reload_current_plugin; },
+    # Reload
+    Wx::Event::EVT_MENU(
+        $main,
+        $self->{menu}->Append( -1, _T("Reload WebGUI Plugin\tCtrl+Shift+R"), ),
+        sub { $main->ide->plugin_manager->reload_current_plugin },
+    );
 
-        "WGDev Command" => [
-            map {
-                my $cmd = $_;
-                "wgd $cmd" => sub { $self->wgd_cmd($cmd) }
-                } $self->wgd_commands
-        ],
+    $self->{menu}->AppendSeparator;
 
-        '---' => undef,
+    # WGDev Commands
+    my $wgd_submenu = Wx::Menu->new;
+    for my $cmd ( $self->wgd_commands ) {
+        Wx::Event::EVT_MENU( $main, $wgd_submenu->Append( -1, $cmd ), sub { $self->wgd_cmd($cmd) }, );
+    }
+    $self->{menu}->Append( -1, 'wgd', $wgd_submenu );
 
-        "WRE Services" => [
-            "Start" => [
-                'All'      => sub { $main->run_command(qq($wreservice --start all")) },
-                'Mysql'    => sub { $main->run_command(qq($wreservice --start mysql")) },
-                'Modperl'  => sub { $main->run_command(qq($wreservice --start modperl")) },
-                'Modproxy' => sub { $main->run_command(qq($wreservice --start modproxy")) },
-                'SPECTRE'  => sub { $main->run_command(qq($wreservice --start specre")) },
-            ],
-            "Stop" => [
-                'All'      => sub { $main->run_command(qq($wreservice --stop all")) },
-                'Mysql'    => sub { $main->run_command(qq($wreservice --stop mysql")) },
-                'Modperl'  => sub { $main->run_command(qq($wreservice --stop modperl")) },
-                'Modproxy' => sub { $main->run_command(qq($wreservice --stop modproxy")) },
-                'SPECTRE'  => sub { $main->run_command(qq($wreservice --stop specre")) },
-            ],
-            "Restart" => [
-                'All'      => sub { $main->run_command(qq($wreservice --restart all")) },
-                'Mysql'    => sub { $main->run_command(qq($wreservice --restart mysql")) },
-                'Modperl'  => sub { $main->run_command(qq($wreservice --restart modperl")) },
-                'Modproxy' => sub { $main->run_command(qq($wreservice --restart modproxy")) },
-                'SPECTRE'  => sub { $main->run_command(qq($wreservice --restart specre")) },
-            ],
-            "Ping" => [
-                'All'      => sub { $main->run_command(qq($wreservice --ping all")); },
-                'Mysql'    => sub { $main->run_command(qq($wreservice --ping mysql")); },
-                'Modperl'  => sub { $main->run_command(qq($wreservice --ping modperl")); },
-                'Modproxy' => sub { $main->run_command(qq($wreservice --ping modproxy")); },
-                'SPECTRE'  => sub { $main->run_command(qq($wreservice --ping specre")); },
-            ],
-        ],
+    $self->{menu}->AppendSeparator;
 
-        '---' => undef,
+    # WRE Services
+    my $wreservice = 'gksudo -- /data/wre/sbin/wreservice.pl';
+    my $services   = Wx::Menu->new;
+    for my $service (qw(all mysql modperl modproxy spectre)) {
+        my $submenu = Wx::Menu->new;
+        for my $cmd (qw(start stop restart ping)) {
+            Wx::Event::EVT_MENU(
+                $main,
+                $submenu->Append( -1, _T("\u$cmd \u$service"), ),
+                sub { $main->run_command(qq($wreservice --$cmd $service)) },
+            );
+        }
+        $services->Append( -1, "\u$service", $submenu );
+    }
+    $self->{menu}->Append( -1, _T("WRE Services"), $services );
 
-        'Online Resources' => [ $self->online_resources ],
+    $self->{menu}->AppendSeparator;
 
-        '---' => undef,
+    # Asset Tree
+    $self->{asset_tree_toggle} = $self->{menu}->AppendCheckItem( -1, _T("Show Asset Tree"), );
+    Wx::Event::EVT_MENU( $main, $self->{asset_tree_toggle}, sub { $self->toggle_asset_tree } );
+    $self->{asset_tree_toggle}->Check(0);
 
-        "About" => sub { $self->show_about },
-        
-        "Asset Tree\tCtrl+Shift+S" => sub { $self->toggle_asset_tree },
-    ];
+    # Logview
+    $self->{logview_toggle} = $self->{menu}->AppendCheckItem( -1, _T("Logview"), );
+    Wx::Event::EVT_MENU( $main, $self->{logview_toggle}, sub { $self->toggle_logview } );
+    $self->{logview_toggle}->Check(0);
 
-    return $self->plugin_name => $menu;
+    #	$self->{logview_toggle}->Check($config->{logview_toggle} ? 1 : 0);
+
+    # Online Resources
+    my $resources_submenu = Wx::Menu->new;
+    my %resources         = $self->online_resources;
+    while ( my ( $name, $resource ) = each %resources ) {
+        Wx::Event::EVT_MENU( $main, $resources_submenu->Append( -1, $name ), $resource, );
+    }
+    $self->{menu}->Append( -1, _T("Online Resources"), $resources_submenu );
+
+    # About
+    Wx::Event::EVT_MENU( $main, $self->{menu}->Append( -1, _T("About"), ), sub { $self->show_about }, );
+
+    # Return our plugin with its label
+    return ( $self->plugin_name => $self->{menu} );
 }
 
 sub online_resources {
@@ -247,12 +259,12 @@ sub online_resources {
 }
 
 sub show_preferences {
-	my $self = shift;
-	my $wx_parent = shift;
-	
-	require Padre::Plugin::WebGUI::Preferences;
-	my $prefs  = Padre::Plugin::WebGUI::Preferences->new($self);
-	$prefs->Show;
+    my $self      = shift;
+    my $wx_parent = shift;
+
+    require Padre::Plugin::WebGUI::Preferences;
+    my $prefs = Padre::Plugin::WebGUI::Preferences->new($self);
+    $prefs->Show;
 }
 
 sub wgd_commands {
@@ -298,69 +310,73 @@ END_MESSAGE
     return;
 }
 
+=head2 toggle_logview
+
+Toggle the asset tree panel on/off
+
+N.B. The checkbox gets checked *before* this method runs
+
+=cut
+
 sub toggle_asset_tree {
-	my $self = shift;
-#	my $on = ( @_ ? ( $_[0] ? 1 : 0 ) : 1 );
-#	unless ( $on == $self->main->menu->view->{assets}->IsChecked ) {
-#		$self->main->menu->view->{assets}->Check($on);
-#	}
-#	$self->main->config->set( webgui_assets => $on );
-#	$self->main->config->write;
+    my $self = shift;
 
-#    Wx::AboutBox(Wx::AboutDialogInfo->new);
-
-    # Forcibly reset for now
-#    if ($self->asset_tree) {
-#        $self->main->right->hide( $self->asset_tree );
-#        delete $self->asset_tree;
-#        delete $self->{assets_shown};
-#    }
-    
     return unless $self->ping;
-    
-    my $asset_tree = $self->asset_tree;
-    my $logview = $self->logview;
-    if (!$self->asset_tree_visible) {
-        $self->{asset_tree_visible} = 1;
-		
-		$self->main->right->show( $asset_tree );
-		$self->main->bottom->show( $logview );
-		
-#		$asset_tree->update_gui;
-		
-		$logview->AppendText( "Loaded..\n" );
-		$logview->start( { files => [ 
-            '/data/wre/var/logs/webgui.log', 
-            '/data/wre/var/logs/mylog.log', 
-            '/data/wre/var/logs/modproxy.error.log', 
-            '/data/wre/var/logs/modperl.error.log', 
-            '/home/patspam/a', '/home/patspam/b' 
-            ] } );
 
-    } else {
-        $self->{asset_tree_visible} = 0;
+    my $asset_tree = $self->asset_tree;
+    if ( $self->{asset_tree_toggle}->IsChecked ) {
+        $self->main->right->show($asset_tree);
+        $asset_tree->update_gui;
+    }
+    else {
         $self->main->right->hide($asset_tree);
-        $self->main->bottom->hide( $logview );
-#        $logview->Remove( 0, $logview->GetLastPosition );
     }
 
-	$self->main->aui->Update;
-	$self->ide->save_config;
+    $self->main->aui->Update;
+    $self->ide->save_config;
 
-	return;
+    return;
+}
+
+=head2 toggle_logview
+
+Toggle the logview panel on/off
+
+N.B. The checkbox gets checked *before* this method runs
+
+=cut
+
+sub toggle_logview {
+    my $self = shift;
+
+    if ( $self->{logview_toggle}->IsChecked ) {
+        my $logview = $self->logview;
+        $self->main->bottom->show($logview);
+        $logview->start( { files => $logfiles } );
+    }
+    else {
+
+        # Use direct access so that we don't create instance unnecessarily
+        if ( my $logview = $self->{logview} ) {
+            $self->main->bottom->hide($logview);
+        }
+    }
+
+    $self->main->aui->Update;
+
+    return;
 }
 
 # private subroutine to return the current share directory location
 sub _sharedir {
-	return Cwd::realpath(
-		File::Spec->join(File::Basename::dirname(__FILE__),'WebGUI/share')
-	);
+    return Cwd::realpath( File::Spec->join( File::Basename::dirname(__FILE__), 'WebGUI/share' ) );
 }
 
 # the icon displayed in the Padre plugin manager list
 sub plugin_icon {
+
     # find resource path
-    my $iconpath = File::Spec->catfile( _sharedir(), 'icons', 'wg_16x16.png');
+    my $iconpath = File::Spec->catfile( _sharedir(), 'icons', 'wg_16x16.png' );
 
     # create and return icon
     return Wx::Bitmap->new( $iconpath, Wx::wxBITMAP_TYPE_PNG );
@@ -368,21 +384,21 @@ sub plugin_icon {
 
 sub asset_tree {
     my $self = shift;
-    
-	$self->{asset_tree} or
-		$self->{asset_tree} = do {
-            require Padre::Plugin::WebGUI::Assets;
-            Padre::Plugin::WebGUI::Assets->new( $self );
-		};
+
+    $self->{asset_tree}
+        or $self->{asset_tree} = do {
+        require Padre::Plugin::WebGUI::Assets;
+        Padre::Plugin::WebGUI::Assets->new($self);
+        };
 }
 
 sub logview {
     my $self = shift;
-    
-	$self->{logview} or
-		$self->{logview} = do {
-		    require Padre::Plugin::WebGUI::Logview;
-            Padre::Plugin::WebGUI::Logview->new($self->main);
+
+    $self->{logview}
+        or $self->{logview} = do {
+        require Padre::Plugin::WebGUI::Logview;
+        Padre::Plugin::WebGUI::Logview->new( $self->main );
         };
 }
 
