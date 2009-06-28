@@ -142,10 +142,10 @@ sub plugin_disable {
     
     # Unload all private classese here, so that they can be reloaded
     require Class::Unload;
-    Class::Unload->unload('Padre::Plugin::WebGUI::Assets');
-    Class::Unload->unload('Padre::Plugin::WebGUI::Logview');
-    Class::Unload->unload('Padre::Plugin::WebGUI::Preferences');
     Class::Unload->unload('Padre::Plugin::WebGUI::Task::Logview');
+    Class::Unload->unload('Padre::Plugin::WebGUI::Logview');
+    Class::Unload->unload('Padre::Plugin::WebGUI::Assets');
+    Class::Unload->unload('Padre::Plugin::WebGUI::Preferences');
 }
 
 # The command structure to show in the Plugins menu
@@ -329,7 +329,13 @@ sub toggle_asset_tree {
 #		$asset_tree->update_gui;
 		
 		$logview->AppendText( "Loaded..\n" );
-		$logview->start;#check_for_updates();
+		$logview->start( { files => [ 
+            '/data/wre/var/logs/webgui.log', 
+            '/data/wre/var/logs/mylog.log', 
+            '/data/wre/var/logs/modproxy.error.log', 
+            '/data/wre/var/logs/modperl.error.log', 
+            '/home/patspam/a', '/home/patspam/b' 
+            ] } );
 
     } else {
         $self->{asset_tree_visible} = 0;

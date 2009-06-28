@@ -14,6 +14,7 @@ sub prepare {
     my $self = shift;
 
     Wx::Event::EVT_COMMAND( Padre->ide->wx->main, -1, $LOGLINE_EVENT, \&on_log_line );
+    
     return 1;
 }
 
@@ -22,27 +23,56 @@ sub on_log_line {
     my ( $main, $event ) = @_;
     @_ = ();    # hack to avoid "Scalars leaked"
 
-    my $data = $event->GetData();
-    $main->{webgui}->logview->AppendText($data);
+    chomp(my $data = $event->GetData());
+    $main->{webgui}->logview->AppendText("$data\n");
 }
 
 # Run the task - must not touch the GUI, except through Wx events.
 sub run {
     my $self = shift;
-
-    my $name = "/data/wre/var/logs/modproxy.error.log";
-    $self->post_event( $LOGLINE_EVENT, "Opening $name\n" );
-
+    
     require File::Tail;
-    my $file = File::Tail->new( name => $name, maxinterval => 0.2 );
-
-#    my $max = 5;
-#    my $start = time;
-    while ( defined( my $line = $file->read ) ) {#&& time - $start < $max ) {
-        $self->post_event( $LOGLINE_EVENT, $line );
+    my $maxinterval = $self->{maxinterval} || 0.1;
+    
+    my $ctrl = $self->{ctrl};
+    $self->post_event( $LOGLINE_EVENT, "DEBUG: Using $ctrl as control file" );
+    
+    my @files;
+    push( @files, File::Tail->new( name => $ctrl, maxinterval => $maxinterval ) );
+    
+    for my $file (@{$self->{files}}) {
+        if (!-e $file) {
+            $self->post_event( $LOGLINE_EVENT, "File does not exist: $file, skipping" );
+            next;
+        }
+        push( @files, File::Tail->new( name => $file, maxinterval => $maxinterval ) );
+        $self->post_event( $LOGLINE_EVENT, "DEBUG: Watching file: $file" );
     }
-    $self->post_event( $LOGLINE_EVENT, "Task finished\n" );
-    return 1;
+
+    while (1) {
+        my ( $nfound, $timeleft, @pending ) = File::Tail::select( undef, undef, undef, undef, @files );
+        unless ($nfound) {
+            # perhaps we should 'yield' here?
+        }
+        else {
+            for my $p (@pending) {
+                my $filename = $p->{input};
+                chomp(my $line = $p->read);
+                if ($filename eq $ctrl) {
+                    if ($line eq 'exit') {
+                        $self->post_event( $LOGLINE_EVENT, "Exiting" );
+                        return 1;
+                    } elsif ($line eq 'status') {
+                        $self->post_event( $LOGLINE_EVENT, "Watching file: $_->{input}" ) for @files;
+                    } else {
+                        $self->post_event( $LOGLINE_EVENT, "Unknown command: $line" );
+                    }
+                } else {
+                    $self->post_event( $LOGLINE_EVENT, "$filename (" . localtime(time) . ") $line" );
+                }
+            }
+        }
+    }
 }
 
 # This is run in the main thread after the task is done.
