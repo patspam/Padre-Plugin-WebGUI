@@ -44,7 +44,7 @@ sub start {
 	if ( $self->{timer}->IsRunning ) {
 		$self->{timer}->Stop;
 	}
-	$self->{timer}->Start( 2000, 0 );
+	$self->{timer}->Start( 2000, 1 );
 
 	return;
 }

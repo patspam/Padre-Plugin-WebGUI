@@ -36,9 +36,9 @@ sub run {
     require File::Tail;
     my $file = File::Tail->new( name => $name, maxinterval => 0.2 );
 
-    my $max = 5;
-    my $start = time;
-    while ( defined( my $line = $file->read ) && time - $start < $max ) {
+#    my $max = 5;
+#    my $start = time;
+    while ( defined( my $line = $file->read ) ) {#&& time - $start < $max ) {
         $self->post_event( $LOGLINE_EVENT, $line );
     }
     $self->post_event( $LOGLINE_EVENT, "Task finished\n" );
