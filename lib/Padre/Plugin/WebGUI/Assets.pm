@@ -185,6 +185,7 @@ sub build_asset_tree {
             type => $asset->getName,
             url  => $asset->getUrl,
             icon => File::Basename::fileparse( $asset->getIcon ),
+            asset => $asset,
         };
         
         # Recursively serialise children and add to node's children property
@@ -196,14 +197,29 @@ sub build_asset_tree {
     return $serialise->($root)->{children};
 }
 
+sub edit_asset {
+    my $self = shift;
+    my $item = shift;
+    my $wgd  = $self->wgd;
+    my $session = $wgd->session;
+    
+    my $asset = $item->{asset};
+    my $serialised = $wgd->asset->serialize($asset);
+    $self->log->debug($serialised);
+    $self->main->new_document_from_string($serialised, 'text/x-yaml');
+    
+#    $self->main->current->editor->error('test');
+    $self->main->current->notebook->SetPageText( $self->main->current->notebook->GetSelection, 'test');
+}
+
 sub on_tree_item_right_click {
     my ( $self, $event ) = @_;
 
     my $showMenu = 0;
     my $menu     = Wx::Menu->new;
-    my $itemData = $self->GetPlData( $event->GetItem );
+    my $item = $self->GetPlData( $event->GetItem );
 
-    if ( defined $itemData ) {
+    if ( defined $item ) {
         my $submenu;
         
         $submenu = $menu->Append( -1, Wx::gettext("Details..") );
@@ -211,6 +227,14 @@ sub on_tree_item_right_click {
             $self, $submenu,
             sub {
                 $self->on_tree_item_activated($event, { action => 'details' });
+            },
+        );
+        
+        $submenu = $menu->Append( -1, Wx::gettext("Edit") );
+        Wx::Event::EVT_MENU(
+            $self, $submenu,
+            sub {
+                $self->edit_asset($item);
             },
         );
         
@@ -249,18 +273,23 @@ sub on_tree_item_activated {
         return;
     }
     
-    if ($item->{refresh}) {
+    elsif ($item->{refresh}) {
         $self->update_gui_connected;
         return;
-    }    
+    }
     
-    if ($opts->{action} eq 'details') {
+    elsif ($opts->{action} eq 'details') {
         $self->main->error( <<END_DETAILS );
 Id: \t\t\t $item->{id}
 Type: \t\t $item->{type}
 Url: \t\t\t $item->{url}
 Menu Title: \t $item->{name}
 END_DETAILS
+    }
+    
+    else {
+        # Default event is double-click
+        $self->edit_asset($item);
     }
 
     return;
