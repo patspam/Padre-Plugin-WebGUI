@@ -200,16 +200,26 @@ sub build_asset_tree {
 sub edit_asset {
     my $self = shift;
     my $item = shift;
-    my $wgd  = $self->wgd;
-    my $session = $wgd->session;
     
-    my $asset = $item->{asset};
-    my $serialised = $wgd->asset->serialize($asset);
-    $self->log->debug($serialised);
-    $self->main->new_document_from_string($serialised, 'text/x-yaml');
-    
-#    $self->main->current->editor->error('test');
-    $self->main->current->notebook->SetPageText( $self->main->current->notebook->GetSelection, 'test');
+    # Create new editor tab
+    my $main = $self->main;
+    $main->on_new();
+    my $editor = $main->current->editor or return;
+	my $doc = $editor->{Document};
+	
+	# Set WebGUI Asset mime-type and rebless
+	$doc->set_mimetype('text/x-webgui-asset');
+	$doc->editor->padre_setup;
+	$doc->rebless;
+	return unless $doc->isa('Padre::Document::WebGUI::Asset');
+	
+	# Load asset
+	$doc->load_asset($self->wgd, $item->{asset});
+	
+	my $id = $main->find_id_of_editor( $editor );
+	my $page = $main->notebook->GetPage($id);
+	$page->SetSavePoint;
+	$main->refresh;
 }
 
 sub on_tree_item_right_click {

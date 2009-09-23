@@ -60,6 +60,11 @@ sub padre_interfaces {
         ;
 }
 
+# Register the document types that we want to handle
+sub registered_documents {      
+    'text/x-webgui-asset' => 'Padre::Document::WebGUI::Asset',
+}
+
 # called when the plugin is enabled
 sub plugin_enable {
     my $self = shift;
@@ -163,6 +168,7 @@ sub plugin_disable {
     Class::Unload->unload('Padre::Plugin::WebGUI::Logview');
     Class::Unload->unload('Padre::Plugin::WebGUI::Assets');
     Class::Unload->unload('Padre::Plugin::WebGUI::Preferences');
+    Class::Unload->unload('Padre::Document::WebGUI::Asset');
 }
 
 sub menu_plugins {
@@ -235,7 +241,7 @@ sub menu_plugins {
     Wx::Event::EVT_MENU( $main, $self->{menu}->Append( -1, _T("About"), ), sub { $self->show_about }, );
     
     # Push
-    Wx::Event::EVT_MENU( $main, $self->{menu}->Append( -1, _T("Push\tCtrl+Shift+U"), ), sub { $self->push }, );
+    # Wx::Event::EVT_MENU( $main, $self->{menu}->Append( -1, _T("Push\tCtrl+S"), ), sub { $self->push }, );
 
     # Return our plugin with its label
     return ( $self->plugin_name => $self->{menu} );
@@ -406,50 +412,6 @@ sub logview {
         require Padre::Plugin::WebGUI::Logview;
         Padre::Plugin::WebGUI::Logview->new( $self->main );
         };
-}
-
-sub push {
-    my $self = shift;
-	my $wgd = $self->wgd;
-	my $asset_text = $self->current->document->text_get;
-	
-	require WebGUI::VersionTag;
-    my $version_tag = WebGUI::VersionTag->getWorking( $wgd->session );
-    $version_tag->set( { name => 'WGDev Asset Editor' } );
-    
-    my $asset_data = $wgd->asset->deserialize($asset_text);
-    my $asset;
-    my $parent;
-    if ( $asset_data->{parent} ) {
-        $parent = eval { $wgd->asset->find( $asset_data->{parent} ) };
-    }
-    if ( $asset_data->{assetId} ) {
-        $asset = $wgd->asset->by_id( $asset_data->{assetId} );
-        $asset = $asset->addRevision(
-            $asset_data,
-            undef,
-            {
-                skipAutoCommitWorkflows => 1,
-                skipNotification        => 1,
-            } );
-        if ($parent) {
-            $asset->setParent($parent);
-        }
-    }
-    else {
-        $parent ||= $wgd->asset->import_node;
-        my $asset_id = $asset_data->{assetId};
-        $asset = $parent->addChild(
-            $asset_data,
-            $asset_id,
-            undef,
-            {
-                skipAutoCommitWorkflows => 1,
-                skipNotification        => 1,
-            } );
-    }
-    
-    $version_tag->commit;
 }
 
 =head1 AUTHOR
