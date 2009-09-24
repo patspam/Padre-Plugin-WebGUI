@@ -8,6 +8,8 @@ requires 'WGDev'  => '0.4.0';
 test_requires 'Test::More';
 recommends 'JSON::XS' => '2.24';
 
+install_share('share');
+
 auto_install;
 
 WriteAll;

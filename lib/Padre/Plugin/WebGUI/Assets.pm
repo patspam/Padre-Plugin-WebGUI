@@ -7,7 +7,6 @@ use Padre::Current ();
 use Padre::Util    ();
 use Padre::Wx      ();
 use base 'Wx::TreeCtrl';
-use Data::Dumper;
 
 # generate fast accessors
 use Class::XSAccessor getters => {
@@ -55,7 +54,6 @@ sub main { $_[0]->GetGrandParent }
 sub gettext_label { Wx::gettext('Asset Tree') }
 sub clear { $_[0]->DeleteAllItems }
 sub log { $_[0]->plugin->log }
-
 
 sub update_gui {
     my $self = shift;
@@ -155,6 +153,7 @@ sub update_gui_connected {
 }
 
 # generate the list of assets
+# todo - make this lazy-load for better performance
 sub build_asset_tree {
     my $self    = shift;
     my $wgd     = $self->wgd;
@@ -208,7 +207,8 @@ sub edit_asset {
 	my $doc = $editor->{Document};
 	
 	# Set WebGUI Asset mime-type and rebless
-	$doc->set_mimetype('text/x-webgui-asset');
+	# todo - make this dynamic based on asset className and supported doc types
+	$doc->set_mimetype('application/x-webgui-asset');
 	$doc->editor->padre_setup;
 	$doc->rebless;
 	return unless $doc->isa('Padre::Document::WebGUI::Asset');
@@ -216,6 +216,7 @@ sub edit_asset {
 	# Load asset
 	$doc->load_asset($self->wgd, $item->{asset});
 	
+	# Fake-save tab so that it isn't in the unsaved state
 	my $id = $main->find_id_of_editor( $editor );
 	my $page = $main->notebook->GetPage($id);
 	$page->SetSavePoint;
@@ -267,7 +268,6 @@ sub on_tree_item_right_click {
 
     return;
 }
-
 
 # event handler for item activation
 sub on_tree_item_activated {

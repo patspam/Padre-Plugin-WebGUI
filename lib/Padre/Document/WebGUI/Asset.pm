@@ -6,15 +6,14 @@ use warnings;
 use Padre::Document ();
 use Carp;
 
-our $VERSION = '0.46';
-our @ISA     = 'Padre::Document';
+our @ISA = 'Padre::Document';
 
 use Class::XSAccessor getters => {
     wgd => 'wgd',
     asset => 'asset',
 };
 
-sub get_mimetype { 'text/x-webgui-asset' }
+sub get_mimetype { 'application/x-webgui-asset' }
 
 sub basename { $_[0]->filename }
 
@@ -68,7 +67,7 @@ sub save_file {
     # Two saves in the same second will cause asset->addRevision to explode
     return 1 if $self->last_sync && $self->last_sync == time;
     
-    Padre::Util::debug("Saving asset " . $asset->getUrl);
+    Padre::Util::debug("Saving asset to url: " . $asset->getUrl);
     
 	my $serialised = $self->text_get;
 	my $deserialised = $wgd->asset->deserialize($serialised);
