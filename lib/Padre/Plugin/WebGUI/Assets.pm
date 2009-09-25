@@ -12,6 +12,7 @@ use base 'Wx::TreeCtrl';
 use Class::XSAccessor getters => {
     plugin => 'plugin',
     connected => 'connected',
+    url => 'url',
 };
 
 # constructor
@@ -48,12 +49,10 @@ sub new {
 }
 
 # accessors
-sub wgd { $_[0]->plugin->wgd }
 sub right { $_[0]->GetParent }
 sub main { $_[0]->GetGrandParent }
 sub gettext_label { Wx::gettext('Asset Tree') }
 sub clear { $_[0]->DeleteAllItems }
-sub log { $_[0]->plugin->log }
 
 sub update_gui {
     my $self = shift;
@@ -143,10 +142,12 @@ sub update_gui_connected {
     $self->SetItemTextColour( $refresh, Wx::Colour->new( 0x00, 0x00, 0x7f ) );
     $self->SetItemImage( $refresh, 0 );
 
-    update_treectrl( $self, $self->build_asset_tree, $root );
-
-    # Register right-click event handler
-    Wx::Event::EVT_TREE_ITEM_RIGHT_CLICK( $self, $self, \&on_tree_item_right_click, );
+    if (my $assets = $self->build_asset_tree) {
+        update_treectrl( $self, $assets, $root );
+        
+        # Register right-click event handler
+        Wx::Event::EVT_TREE_ITEM_RIGHT_CLICK( $self, $self, \&on_tree_item_right_click, );
+    }
 
     $self->GetBestSize;
     $self->Thaw;
@@ -155,45 +156,29 @@ sub update_gui_connected {
 # generate the list of assets
 # todo - make this lazy-load for better performance
 sub build_asset_tree {
-    my $self    = shift;
-    my $wgd     = $self->wgd;
-    my $session = $wgd->session;
-
-    require WebGUI::Asset;
-
-    my $root = WebGUI::Asset->getRoot($session);
-    my $assets = $root->getLineage( [ "self", "descendants" ], { returnObjects => 1 } );
+    my $self = shift;
     
-    # Build a hash mapping each assetId to an array of children for that asset
-    my %tree;
-    foreach my $asset (@$assets) {
-        # Add this new asset to the tree, initially with no children
-        $tree{ $asset->getId } = [];
-        
-        # Push this asset onto its parent's list of children
-        push @{ $tree{ $asset->get('parentId') } }, $asset;
+    # Create a user agent object
+    use LWP::UserAgent;
+    my $ua = LWP::UserAgent->new;
+    my $response = $ua->get( $self->url . '?op=padre&func=list' );
+    if (!$response->is_success) {
+        $self->editor->main->error("The server said:\n" . $response->status_line);
+        return;
     }
-
-    # Serialise the tree and turn it into a recursive tree hash as requried by update_treectrl
-    my $serialise;
-    $serialise = sub {
-        my $asset = shift or return;
-        my $node = {
-            name => $asset->getMenuTitle,
-            id   => $asset->getId,
-            type => $asset->getName,
-            url  => $asset->getUrl,
-            icon => File::Basename::fileparse( $asset->getIcon ),
-            asset => $asset,
-        };
-        
-        # Recursively serialise children and add to node's children property
-        push( @{ $node->{children} }, $serialise->($_) ) for @{ $tree{ $asset->getId } };
-        return $node;
-    };
-
-    # Our tree starts with all the children of the root node
-    return $serialise->($root)->{children};
+    
+    my $assets = $response->content;
+    # Padre::Util::debug($assets);
+    
+    use JSON;
+    $assets = eval { from_json($assets) };
+    if ($@) {
+        Padre::Util::debug($@);
+        $self->main->error("The server sent an invalid response, please try again (and check the logs)");
+        return;
+    } else {
+        return $assets;
+    }    
 }
 
 sub edit_asset {
@@ -207,14 +192,29 @@ sub edit_asset {
 	my $doc = $editor->{Document};
 	
 	# Set WebGUI Asset mime-type and rebless
-	# todo - make this dynamic based on asset className and supported doc types
-	$doc->set_mimetype('application/x-webgui-asset');
+	my %registered_documents = $self->plugin->registered_documents;
+	my $mimetype = lc $item->{className};
+	$mimetype =~ s/.*:://;
+	$mimetype = "application/x-webgui-$mimetype";
+	
+	# Fall-back to generic 'asset' mime-type
+	$mimetype = "application/x-webgui-asset" unless $registered_documents{$mimetype};
+	Padre::Util::debug("Using mimetype: $mimetype for $item->{className}");
+	$doc->set_mimetype($mimetype);
+	
+	# Rebless
 	$doc->editor->padre_setup;
 	$doc->rebless;
+	
+#	# Highlighter
+#	my $module = Padre::MimeTypes->get_current_highlighter_of_mime_type('text/html');
+#	Padre::Util::debug("Using highlighter: $module");
+#	$doc->set_highlighter($module);
+	
 	return unless $doc->isa('Padre::Document::WebGUI::Asset');
 	
 	# Load asset
-	$doc->load_asset($self->wgd, $item->{asset});
+	$doc->load_asset($item->{assetId}, $self->url);
 	
 	# Fake-save tab so that it isn't in the unsaved state
 	my $id = $main->find_id_of_editor( $editor );
@@ -249,14 +249,6 @@ sub on_tree_item_right_click {
             },
         );
         
-        $submenu = $menu->Append( -1, Wx::gettext("Export Package") );
-        Wx::Event::EVT_MENU(
-            $self, $submenu,
-            sub {
-                $self->on_tree_item_activated($event, {action => 'export' });
-            },
-        );
-        
         $showMenu++;
     }
 
@@ -279,6 +271,9 @@ sub on_tree_item_activated {
     return if not defined $item;
     
     if ($item->{connect}) {
+        my $url = $self->main->prompt( 'Enter a URL to connect to, for example: http://admin:123qwe@dev.localhost.localdomain', 'Connect To Server', 'wg_url' );
+        return unless $url;
+        $self->{url} = $url;
         $self->update_gui_connected;
         return;
     }
@@ -289,12 +284,11 @@ sub on_tree_item_activated {
     }
     
     elsif ($opts->{action} eq 'details') {
-        $self->main->error( <<END_DETAILS );
-Id: \t\t\t $item->{id}
-Type: \t\t $item->{type}
-Url: \t\t\t $item->{url}
-Menu Title: \t $item->{name}
-END_DETAILS
+        my $str = q{};
+        for my $key (sort keys %$item) {
+            $str .= qq{$key:\t\t $item->{$key}\n};
+        }
+        $self->main->error( $str );
     }
     
     else {
@@ -310,10 +304,11 @@ my $image_lookup;
 sub get_item_image {
     my $self    = shift;
     my $icon    = shift;
+    
+    $icon =~ s{.*/}{};
     my $imglist = $self->GetImageList;
     if ( !$image_lookup->{$icon} ) {
-        my $index = $imglist->Add(
-            Wx::Bitmap->new( "/data/WebGUI/www/extras/assets/small/" . $icon, Wx::wxBITMAP_TYPE_GIF ) );
+        my $index = $imglist->Add( Wx::Bitmap->new( $self->plugin->plugin_directory_share . "/icons/16x16/$icon", Wx::wxBITMAP_TYPE_GIF ) );
         $image_lookup->{$icon} = $index;
     }
     return $image_lookup->{$icon} || 0;
@@ -325,7 +320,7 @@ sub update_treectrl {
     foreach my $item ( @{$items} ) {
         my $node = $self->AppendItem(
             $parent,
-            $item->{name},
+            $item->{menuTitle},
             -1, -1,
             Wx::TreeItemData->new({%$item}),
         );
