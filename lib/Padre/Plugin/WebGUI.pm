@@ -33,59 +33,68 @@ This plugin adds a "WebGUI" item to the Padre plugin menu, with a bunch of WebGU
 
 # The plugin name to show in the Plugin Manager and menus
 sub plugin_name {
-    return _T("WebGUI Remote Edit");
+    return _T("WebGUI");
 }
 
 # Declare the Padre interfaces this plugin uses
 sub padre_interfaces {
     'Padre::Plugin' => 0.29,
+        ;
 }
 
 # Register the document types that we want to handle
-sub registered_documents {      
-    'application/x-webgui-asset'    => 'Padre::Document::WebGUI::Asset',
-    'application/x-webgui-template' => 'Padre::Document::WebGUI::Asset::Template',
+sub registered_documents {
+    'application/x-webgui-asset'        => 'Padre::Document::WebGUI::Asset',
+        'application/x-webgui-template' => 'Padre::Document::WebGUI::Asset::Template',
+        'application/x-webgui-snippet'  => 'Padre::Document::WebGUI::Asset::Snippet',
+        ;
 }
 
 sub plugin_directory_share {
     my $self = shift;
-    
+
     my $share = $self->SUPER::plugin_directory_share;
     return $share if $share;
-    
+
     # Try this one instead (for dev version)
     my $path = Cwd::realpath( File::Spec->join( File::Basename::dirname(__FILE__), '../../../', 'share' ) );
     return $path if -d $path;
-    
+
     return;
 }
 
 # called when the plugin is enabled
 sub plugin_enable {
     my $self = shift;
-    
+
     Padre::Util::debug('Enabling Padre::Plugin::WebGUI');
 
     # workaround Padre bug
     my %registered_documents = $self->registered_documents;
-    while ( my($k, $v) = each %registered_documents) {
+    while ( my ( $k, $v ) = each %registered_documents ) {
         Padre::MimeTypes->add_highlighter_to_mime_type( $k, $v );
     }
-    
+
+    # Create empty config object if it doesn't exist
+    my $config = $self->config_read;
+    if ( !$config ) {
+        $self->config_write( {} );
+    }
+
     return 1;
 }
 
 # called when the plugin is disabled/reloaded
 sub plugin_disable {
     my $self = shift;
-    
+
     Padre::Util::debug('Disabling Padre::Plugin::WebGUI');
-    
+
     if ( my $asset_tree = $self->{asset_tree} ) {
         $self->main->right->hide($asset_tree);
         delete $self->{asset_tree};
     }
-    
+
     # Unload all private classese here, so that they can be reloaded
     require Class::Unload;
     Class::Unload->unload('Padre::Plugin::WebGUI::Assets');
@@ -97,24 +106,16 @@ sub menu_plugins {
 
     $self->{menu} = Wx::Menu->new;
 
-    # Reload (handy when developing this plugin)
-    Wx::Event::EVT_MENU(
-        $main,
-        $self->{menu}->Append( -1, _T("Reload WebGUI Plugin\tCtrl+Shift+R"), ),
-        sub { $main->ide->plugin_manager->reload_current_plugin },
-    );
-
-    # --
-    $self->{menu}->AppendSeparator;
-
     # Asset Tree
     $self->{asset_tree_toggle} = $self->{menu}->AppendCheckItem( -1, _T("Show Asset Tree"), );
     Wx::Event::EVT_MENU( $main, $self->{asset_tree_toggle}, sub { $self->toggle_asset_tree } );
-    
+
     # Turn on Asset Tree as soon as Plugin is enabled
     # Todo - find a better place to put this
-    $self->{asset_tree_toggle}->Check(1);
-    $self->toggle_asset_tree;
+    if ( $self->config_read->{show_asset_tree} ) {
+        $self->{asset_tree_toggle}->Check(1);
+        $self->toggle_asset_tree;
+    }
 
     # Online Resources
     my $resources_submenu = Wx::Menu->new;
@@ -126,6 +127,16 @@ sub menu_plugins {
 
     # About
     Wx::Event::EVT_MENU( $main, $self->{menu}->Append( -1, _T("About"), ), sub { $self->show_about }, );
+
+    # --
+    $self->{menu}->AppendSeparator;
+
+    # Reload (handy when developing this plugin)
+    Wx::Event::EVT_MENU(
+        $main,
+        $self->{menu}->Append( -1, _T("Reload WebGUI Plugin\tCtrl+Shift+R"), ),
+        sub { $main->ide->plugin_manager->reload_current_plugin },
+    );
 
     # Return our plugin with its label
     return ( $self->plugin_name => $self->{menu} );
@@ -171,7 +182,7 @@ sub show_about {
     my $about = Wx::AboutDialogInfo->new;
     $about->SetName("Padre::Plugin::WebGUI");
     $about->SetDescription( <<"END_MESSAGE" );
-WebGUI Remote Edit Plugin for Padre
+WebGUI Plugin for Padre
 http://patspam.com
 END_MESSAGE
     $about->SetVersion($VERSION);
@@ -182,7 +193,7 @@ END_MESSAGE
     return;
 }
 
-sub ping { 1 }
+sub ping {1}
 
 # toggle_asset_tree
 # Toggle the asset tree panel on/off
@@ -196,9 +207,11 @@ sub toggle_asset_tree {
     if ( $self->{asset_tree_toggle}->IsChecked ) {
         $self->main->right->show($asset_tree);
         $asset_tree->update_gui;
+        $self->config_write( { %{ $self->config_read }, show_asset_tree => 1 } );
     }
     else {
         $self->main->right->hide($asset_tree);
+        $self->config_write( { %{ $self->config_read }, show_asset_tree => 0 } );
     }
 
     $self->main->aui->Update;
@@ -210,7 +223,7 @@ sub toggle_asset_tree {
 sub asset_tree {
     my $self = shift;
 
-    if (!$self->{asset_tree}) {
+    if ( !$self->{asset_tree} ) {
         $self->{asset_tree} = Padre::Plugin::WebGUI::Assets->new($self);
     }
     return $self->{asset_tree};
