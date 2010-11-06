@@ -1,6 +1,7 @@
 Revision history for {{ $dist->name }}
 
 {{ $NEXT }}
+    * Updated to use Dist::Zilla
 
 0.06    2010-09-03
     * Compatibility to newer version of Padre (ZENOG)
