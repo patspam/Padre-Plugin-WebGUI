@@ -1,5 +1,14 @@
-Revision history for Padre-Plugin-WebGUI
+Revision history for {{ $dist->name }}
+
+{{ $NEXT }}
+
+0.06    2010-09-03
+    * Compatibility to newer version of Padre (ZENOG)
+	* Fix saving (Padre::Document::last_sync was removed)
+
+-- No revision history between 0.01 and 0.05
+    * Replaced debug called with new TRACE() call
 
 0.01    Date/time
-        First version, released on an unsuspecting world.
+    * First version
 

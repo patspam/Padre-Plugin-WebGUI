@@ -4,7 +4,9 @@ name 'Padre-Plugin-WebGUI';
 all_from 'lib/Padre/Plugin/WebGUI.pm';
 author 'Patrick Donelan <pat@patspam.com>';
 license 'perl';
-requires 'WGDev'  => '0.4.0';
+requires 'Padre' => '0.69';
+requires 'LWP::UserAgent';
+requires 'JSON';
 test_requires 'Test::More';
 recommends 'JSON::XS' => '2.24';
 
